@@ -88,6 +88,11 @@ def ebook_convert_binary(settings: Settings) -> Path:
     return settings.calibredb.parent / name
 
 
+def convert_timeout() -> int:
+    """Seconds allowed for one ebook-convert run (large PDFs are slow)."""
+    return int(os.environ.get("CALIBRE_CONVERT_TIMEOUT", "900"))
+
+
 def extract_text(settings: Settings, source: Path) -> Path:
     """Return the path of a cached plain-text copy, converting if needed."""
     digest = hashlib.sha1(
@@ -96,12 +101,19 @@ def extract_text(settings: Settings, source: Path) -> Path:
     target = cache_dir() / f"{digest}.txt"
     if target.exists():
         return target
-    result = subprocess.run(
-        [str(ebook_convert_binary(settings)), str(source), str(target)],
-        capture_output=True,
-        text=True,
-        timeout=settings.timeout_seconds,
-    )
+    try:
+        result = subprocess.run(
+            [str(ebook_convert_binary(settings)), str(source), str(target)],
+            capture_output=True,
+            text=True,
+            timeout=convert_timeout(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        target.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"text extraction timed out after {convert_timeout()}s for {source.name}; "
+            "raise CALIBRE_CONVERT_TIMEOUT for very large books"
+        ) from exc
     if result.returncode != 0 or not target.exists():
         error = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"failed to extract text from {source.name}: {error[-200:]}")
@@ -196,7 +208,7 @@ def build_index(
     for book_id in pending:
         try:
             indexed.append(index_book(settings, book_id))
-        except RuntimeError as exc:
+        except Exception as exc:  # noqa: BLE001 — one bad book must not stop the batch
             failed.append({"book_id": book_id, "error": str(exc)})
     return {
         "indexed": indexed,

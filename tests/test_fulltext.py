@@ -130,6 +130,37 @@ def test_build_index_processes_pending(indexed_fixture, monkeypatch):
     assert [entry["book_id"] for entry in result["indexed"]] == [3]
 
 
+def test_build_index_records_failures_and_continues(indexed_fixture, monkeypatch):
+    settings = indexed_fixture
+    monkeypatch.setattr(calibre_cli, "all_book_ids", lambda s: {1, 2, 99})
+
+    def failing_index_book(s, book_id):
+        if book_id == 99:
+            raise RuntimeError("boom")
+        return {"book_id": book_id}
+
+    monkeypatch.setattr(fulltext, "index_book", failing_index_book)
+    result = fulltext.build_index(settings)
+    assert result["failed"][0]["book_id"] == 99
+    assert result["failed"][0]["error"] == "boom"
+    assert result["indexed_count"] == 0  # books 1 and 2 were already indexed
+
+
+def test_extract_text_timeout_raises_clear_error(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    source = tmp_path / "slow.pdf"
+    source.touch()
+
+    import subprocess as sp
+
+    def fake_run(command, capture_output, text, timeout):
+        raise sp.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(fulltext.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="timed out"):
+        fulltext.extract_text(settings, source)
+
+
 # ---------------------------------------------------------- integration tests
 
 
