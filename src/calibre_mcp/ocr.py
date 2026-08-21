@@ -141,20 +141,29 @@ def _pdf_document(pdf_path: Path) -> Any:
         raise RuntimeError(
             "pymupdf is required for OCR; install the extra: pip install 'calibre-mcp[ocr]'"
         ) from exc
+    pymupdf.TOOLS.mupdf_display_errors(False)  # malformed PDFs would flood stderr
     return pymupdf.open(pdf_path)
 
 
+SAMPLE_PAGES = 20
+
+
 def pdf_text_stats(pdf_path: Path) -> dict[str, Any]:
-    """Per-page text-layer statistics: which pages carry real text."""
+    """Text-layer statistics, sampled over the first pages for speed.
+
+    A scanned book has image-only pages throughout, so the first pages are
+    representative; sampling keeps detection fast even for huge PDFs.
+    """
     document = _pdf_document(pdf_path)
     try:
         page_count = len(document)
+        sample = min(page_count, SAMPLE_PAGES)
         text_pages = sum(
-            1 for page in document if len(page.get_text("text").strip()) >= 40
+            1 for page in document[:sample] if len(page.get_text("text").strip()) >= 40
         )
     finally:
         document.close()
-    return {"pages": page_count, "text_pages": text_pages}
+    return {"pages": page_count, "sampled_pages": sample, "text_pages": text_pages}
 
 
 def is_scanned(pdf_path: Path) -> tuple[bool, dict[str, Any]]:
@@ -162,7 +171,8 @@ def is_scanned(pdf_path: Path) -> tuple[bool, dict[str, Any]]:
     stats = pdf_text_stats(pdf_path)
     if stats["pages"] == 0:
         return False, stats
-    ratio = stats["text_pages"] / stats["pages"]
+    sampled = max(stats.get("sampled_pages", 1), 1)
+    ratio = stats["text_pages"] / sampled
     return ratio < 0.5, {**stats, "text_page_ratio": round(ratio, 3)}
 
 
