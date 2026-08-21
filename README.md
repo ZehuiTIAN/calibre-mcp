@@ -15,6 +15,9 @@ duplicate detection, and manage a "drop folder" inbox — all from chat.
 - **Safe by default**: duplicate detection relies on Calibre itself — a book
   whose title + author is already in the library is skipped, never imported
   twice.
+- **Reads book contents**: a local full-text index (with CJK support) plus
+  paged text reading, built on Calibre's own converter — great for quoting
+  and summarising.
 
 ## Tools
 
@@ -25,6 +28,9 @@ duplicate detection, and manage a "drop folder" inbox — all from chat.
 | `list_books` | Browse the library, defaults to most recently added first |
 | `add_books` | Import ebook files or whole directories, with duplicate detection |
 | `import_inbox` | Import everything in the inbox folder and file it away |
+| `build_index` | One-time index of book contents for full-text search |
+| `search_in_book` | Search inside book contents, returning match snippets |
+| `read_book` | Read a book's plain text page by page (converted on demand) |
 
 ## Requirements
 
@@ -69,6 +75,7 @@ environment variable.
 | `CALIBRE_LIBRARY_PATH` | Library directory to use | The library your Calibre GUI uses (most-used library from `gui.json`, else the default library) |
 | `CALIBREDB_PATH` | Path to the `calibredb` executable | `calibredb` on `PATH`, then platform install locations (macOS app bundle, `C:\Program Files\Calibre2\`) |
 | `CALIBRE_INBOX_DIR` | Drop folder for `import_inbox` | Disabled (tool errors if used) |
+| `CALIBRE_TEXT_CACHE_DIR` | Where converted text + search index live | OS temp dir (not persistent across reboots) |
 | `CALIBREDB_TIMEOUT` | Seconds before a calibredb call is aborted | `300` |
 
 ### Registering with Claude Code
@@ -113,6 +120,31 @@ itself stays clean, and nothing is ever overwritten (name collisions get a
 Supported extensions: `.epub .pdf .mobi .azw .azw3 .djvu .cbz .cbr .fb2 .txt
 .md .docx .rtf .lit .prc .pdb .chm .htmlz`.
 
+## Full-text search & reading
+
+To search inside book contents or quote a passage, index the library once:
+
+1. (Optional) point `CALIBRE_TEXT_CACHE_DIR` at a persistent location —
+   the default cache lives in the OS temp directory.
+2. Ask your assistant to run `build_index`. A first run converts every book
+   with Calibre's converter; expect roughly a second or two per book (PDFs
+   take longer). Later calls skip books that are already indexed.
+
+Then:
+
+- `search_in_book("机器学习与深度学习", book_id=42)` — substring search,
+  works for Chinese without word segmentation and for English; queries
+  shorter than three characters fall back to a linear scan so
+  two-character Chinese words still match.
+- `read_book(42, offset=0, limit=12000)` — paged plain-text reading;
+  responses carry `next_offset` and `total_chars`.
+
+The index and converted texts live **outside** the library (a cache
+directory); the library itself is never modified by these tools. Note that
+calibre's own built-in full-text search is not used: its background
+indexing does not reliably extract text outside the GUI on some platforms,
+and a self-contained index behaves identically everywhere.
+
 ## Caveats
 
 - **Database lock**: while the Calibre GUI has the library open, write
@@ -145,9 +177,10 @@ MIT — see [LICENSE](LICENSE).
 
 ## 中文速览
 
-把本地 Calibre 书库接给 Claude/Cursor 等 AI 助手的 MCP 服务器:五个工具
-(`library_info` / `search_books` / `list_books` / `add_books` / `import_inbox`),
-自动发现 calibredb 和书库位置,全平台(Windows/macOS/Linux)开箱即用。
+把本地 Calibre 书库接给 Claude/Cursor 等 AI 助手的 MCP 服务器:八个工具
+(元数据搜索/浏览/导入查重/收件箱归档 + `build_index`/`search_in_book`/
+`read_book` 全文检索与读正文),自动发现 calibredb 和书库位置,全平台
+(Windows/macOS/Linux)开箱即用。
 
 ```bash
 pipx install calibre-mcp
@@ -157,6 +190,9 @@ claude mcp add calibre-mcp -- calibre-mcp
 导入时自动查重(书名+作者相同的书不会被重复导入);配合
 `CALIBRE_INBOX_DIR` 收件箱目录,把下载的书丢进去、说一句"导入收件箱"即可
 归档,处理完的文件自动归类到 `imported/` 或 `failed/`。
+
+想引用书里内容:先跑一次 `build_index` 建全文索引(中文子串可直接搜),
+之后 `search_in_book` 定位段落、`read_book` 分页读正文。
 
 注意:Calibre 桌面程序打开着同一书库时,写入操作可能因数据库锁失败,
 导入前先关闭 Calibre。

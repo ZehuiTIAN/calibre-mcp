@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 
 from calibre_mcp import __version__, inbox
 from calibre_mcp import calibre as calibre_cli
+from calibre_mcp import fulltext as fulltext_cli
 from calibre_mcp.config import Settings, load_settings
 
 mcp = FastMCP(
@@ -20,9 +21,11 @@ mcp = FastMCP(
     instructions=(
         "Tools for searching and managing a local Calibre ebook library. "
         "Use search_books before looking for new books anywhere else, to check "
-        "whether a title is already in the library. Write operations "
-        "(add_books, import_inbox) can fail while the Calibre GUI has the "
-        "library open — ask the user to close Calibre first if that happens."
+        "whether a title is already in the library. For content-level work "
+        "(quoting, summaries), index the library once with build_index, then "
+        "use search_in_book and read_book. Write operations (add_books, "
+        "import_inbox) can fail while the Calibre GUI has the library open — "
+        "ask the user to close Calibre first if that happens."
     ),
 )
 
@@ -149,6 +152,55 @@ def import_inbox() -> dict[str, Any]:
         summary[STATUS_BUCKETS[status]].append(item)
 
     return summary
+
+
+@mcp.tool()
+def search_in_book(query: str, book_id: int | None = None, limit: int = 20) -> dict[str, Any]:
+    """Full-text search inside book contents, with match snippets for quoting.
+
+    Searches the local text index; books must be indexed first with
+    build_index (a one-time, cached step). Matching is substring-based, so
+    Chinese and English queries both work without word segmentation.
+
+    Args:
+        query: Text to find inside book contents.
+        book_id: Optional book id to restrict the search to a single book.
+        limit: Maximum number of matches to return (1-100, default 20).
+    """
+    return fulltext_cli.search_in_book(_settings(), query, book_id=book_id, limit=limit)
+
+
+@mcp.tool()
+def build_index(book_ids: list[int] | None = None, limit: int | None = None) -> dict[str, Any]:
+    """Index book contents for full-text search (one-time, cached).
+
+    Converts each book's text with calibre's converter and stores it in a
+    local SQLite FTS5 index kept outside the library. Only books that are
+    not indexed yet are processed; an initial run over a whole library can
+    take several minutes.
+
+    Args:
+        book_ids: Optional list of book ids to index; default: all books
+            that are not indexed yet.
+        limit: Optional cap on how many books to index in this call.
+    """
+    return fulltext_cli.build_index(_settings(), book_ids=book_ids, limit=limit)
+
+
+@mcp.tool()
+def read_book(book_id: int, offset: int = 0, limit: int = 12000) -> dict[str, Any]:
+    """Read a page of a book's plain text, converted on demand by calibre.
+
+    The first call converts the book (a copy in a cache directory — the
+    library is never modified); later calls reuse the cache. Returns the
+    chunk plus `next_offset` for paging and `total_chars` for context.
+
+    Args:
+        book_id: The book's id (find it with search_books).
+        offset: Character offset to start reading from (0 = beginning).
+        limit: Maximum characters to return (1-40000, default 12000).
+    """
+    return fulltext_cli.read_book(_settings(), book_id, offset=offset, limit=limit)
 
 
 def main() -> None:
