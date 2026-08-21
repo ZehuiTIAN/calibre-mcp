@@ -118,7 +118,9 @@ def test_dashscope_provider_requests_and_batches(monkeypatch):
             json.dumps({"choices": [{"message": {"content": "# One\n\ntext"}}]}).encode()
         )
 
-    monkeypatch.setattr(ocr_cli.urllib.request, "urlopen", fake_urlopen)
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     provider = ocr_cli.DashscopeProvider("test-key", "", base_url=None)
     pages = [b"page" + str(i).encode() for i in range(10)]  # 10 pages -> 2 batches
     markdown = provider.ocr_pages(pages, {})
