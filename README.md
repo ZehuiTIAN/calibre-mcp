@@ -31,6 +31,8 @@ duplicate detection, and manage a "drop folder" inbox — all from chat.
 | `build_index` | One-time index of book contents for full-text search |
 | `search_in_book` | Search inside book contents, returning match snippets |
 | `read_book` | Read a book's plain text page by page (converted on demand) |
+| `detect_scanned_books` | Find books whose PDF is scanned (no text layer) |
+| `ocr_book` | OCR a scanned PDF via a cloud provider, index it, and re-typeset it into an EPUB |
 
 ## Requirements
 
@@ -77,6 +79,11 @@ environment variable.
 | `CALIBRE_INBOX_DIR` | Drop folder for `import_inbox` | Disabled (tool errors if used) |
 | `CALIBRE_TEXT_CACHE_DIR` | Where converted text + search index live | OS temp dir (not persistent across reboots) |
 | `CALIBREDB_TIMEOUT` | Seconds before a calibredb call is aborted | `300` |
+| `CALIBRE_OCR_PROVIDER` | OCR backend (`anthropic`) | `anthropic` |
+| `CALIBRE_OCR_API_KEY` | API key for the OCR backend | — (required for `ocr_book`) |
+| `CALIBRE_OCR_MODEL` | Model for the OCR backend | provider default |
+| `CALIBRE_OCR_BASE_URL` | Optional API base URL override (proxies/gateways) | — |
+| `CALIBRE_OCR_MAX_PAGES` | Page cap per `ocr_book` run | `500` |
 
 ### Registering with Claude Code
 
@@ -145,6 +152,30 @@ calibre's own built-in full-text search is not used: its background
 indexing does not reliably extract text outside the GUI on some platforms,
 and a self-contained index behaves identically everywhere.
 
+## OCR for scanned PDFs
+
+Calibre has no OCR: a scanned PDF (pages are photos, no text layer) converts
+to an EPUB full of page images and stays unsearchable. calibre-mcp closes
+that gap with a pluggable cloud OCR pipeline:
+
+```bash
+pip install "calibre-mcp[ocr]"     # adds pymupdf + the anthropic SDK
+```
+
+1. Set `CALIBRE_OCR_API_KEY` (and optionally `CALIBRE_OCR_PROVIDER` /
+   `CALIBRE_OCR_MODEL` / `CALIBRE_OCR_BASE_URL`).
+2. `detect_scanned_books()` — lists books whose PDF has no usable text
+   layer (no key needed for detection).
+3. `ocr_book(42)` — renders the pages, sends them to the provider (default:
+   the Anthropic Messages API, 8 pages per request), caches the structured
+   markdown, indexes it for `search_in_book` / `read_book`, then typesets a
+   clean EPUB with pandoc and attaches it to the existing book record
+   (replacing any previous EPUB).
+
+The provider interface is two methods (`ocr_pages`); adding Azure Document
+Intelligence or Aliyun/Baidu OCR means implementing that interface and
+registering it in `ocr.PROVIDERS`.
+
 ## Caveats
 
 - **Database lock**: while the Calibre GUI has the library open, write
@@ -177,9 +208,10 @@ MIT — see [LICENSE](LICENSE).
 
 ## 中文速览
 
-把本地 Calibre 书库接给 Claude/Cursor 等 AI 助手的 MCP 服务器:八个工具
+把本地 Calibre 书库接给 Claude/Cursor 等 AI 助手的 MCP 服务器:十个工具
 (元数据搜索/浏览/导入查重/收件箱归档 + `build_index`/`search_in_book`/
-`read_book` 全文检索与读正文),自动发现 calibredb 和书库位置,全平台
+`read_book` 全文检索与读正文 + `detect_scanned_books`/`ocr_book` 扫描书
+云端 OCR 与重排版),自动发现 calibredb 和书库位置,全平台
 (Windows/macOS/Linux)开箱即用。
 
 ```bash

@@ -14,6 +14,7 @@ from mcp.server.fastmcp import FastMCP
 from calibre_mcp import __version__, inbox
 from calibre_mcp import calibre as calibre_cli
 from calibre_mcp import fulltext as fulltext_cli
+from calibre_mcp import ocr as ocr_cli
 from calibre_mcp.config import Settings, load_settings
 
 mcp = FastMCP(
@@ -185,6 +186,41 @@ def build_index(book_ids: list[int] | None = None, limit: int | None = None) -> 
         limit: Optional cap on how many books to index in this call.
     """
     return fulltext_cli.build_index(_settings(), book_ids=book_ids, limit=limit)
+
+
+@mcp.tool()
+def detect_scanned_books(limit: int = 50) -> dict[str, Any]:
+    """Find library books whose PDF has no usable text layer (scanned pages).
+
+    Such books stay unsearchable until OCR'd with ocr_book. Requires the
+    ``ocr`` extra (pip install 'calibre-mcp[ocr]'); no API key needed.
+
+    Args:
+        limit: Maximum number of scanned books to report (1-200).
+    """
+    return ocr_cli.detect_scanned_books(_settings(), limit=limit)
+
+
+@mcp.tool()
+def ocr_book(book_id: int, typeset: bool = True, import_format: bool = True) -> dict[str, Any]:
+    """OCR a scanned PDF via the configured cloud provider and index the text.
+
+    Detection → page rendering → provider transcription → cache → full-text
+    index → (by default) pandoc re-typeset EPUB attached to the book's
+    existing record. Books with a usable text layer are left untouched.
+
+    Configuration: CALIBRE_OCR_PROVIDER (default "anthropic"),
+    CALIBRE_OCR_API_KEY, CALIBRE_OCR_MODEL, CALIBRE_OCR_BASE_URL,
+    CALIBRE_OCR_MAX_PAGES.
+
+    Args:
+        book_id: Book whose PDF format should be OCR'd.
+        typeset: Also build a re-typeset EPUB with pandoc (default True).
+        import_format: Attach the EPUB to the book record (default True).
+    """
+    return ocr_cli.ocr_book(
+        _settings(), book_id, typeset=typeset, import_format=import_format
+    )
 
 
 @mcp.tool()

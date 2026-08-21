@@ -123,19 +123,38 @@ def extract_text(settings: Settings, source: Path) -> Path:
 # ------------------------------------------------------------------ reading
 
 
+def cached_ocr_text(source: Path) -> Path | None:
+    """OCR markdown cached for a source file, if it exists (see ocr.py)."""
+    digest = hashlib.sha1(
+        f"{source}:{source.stat().st_mtime_ns}".encode()
+    ).hexdigest()[:16]
+    candidate = cache_dir() / "ocr" / f"{digest}.md"
+    return candidate if candidate.exists() else None
+
+
 def read_book(
     settings: Settings, book_id: int, offset: int = 0, limit: int = 12000
 ) -> dict[str, Any]:
-    """Return a page of a book's plain text, plus navigation info."""
+    """Return a page of a book's plain text, plus navigation info.
+
+    Prefers OCR output when the book was previously OCR'd (scanned PDFs),
+    otherwise converts a format file on demand.
+    """
     limit = max(1, min(int(limit), MAX_CHUNK))
     offset = max(0, int(offset))
     source = pick_source(settings, book_id)
-    text_path = extract_text(settings, source)
-    text = text_path.read_text(encoding="utf-8", errors="replace")
+    ocr_text = cached_ocr_text(source)
+    if ocr_text is not None:
+        text = ocr_text.read_text(encoding="utf-8", errors="replace")
+        text_source = "ocr"
+    else:
+        text_path = extract_text(settings, source)
+        text = text_path.read_text(encoding="utf-8", errors="replace")
+        text_source = source.suffix.lstrip(".").upper()
     chunk = text[offset : offset + limit]
     return {
         "book_id": book_id,
-        "format": source.suffix.lstrip(".").upper(),
+        "format": text_source,
         "offset": offset,
         "next_offset": None if offset + limit >= len(text) else offset + len(chunk),
         "total_chars": len(text),
@@ -162,25 +181,30 @@ def _connect(index_file: Path) -> sqlite3.Connection:
     return connection
 
 
-def index_book(settings: Settings, book_id: int) -> dict[str, Any]:
-    """Extract one book's text and (re)index it; idempotent per source file."""
-    source = pick_source(settings, book_id)
-    text_path = extract_text(settings, source)
-    text = text_path.read_text(encoding="utf-8", errors="replace")
+def index_text(settings: Settings, book_id: int, text: str, source: str) -> dict[str, Any]:
+    """(Re)index prepared text for a book; idempotent per book."""
     with _connect(index_path()) as connection:
         connection.execute("DELETE FROM texts WHERE book_id = ?", (book_id,))
         connection.execute(
             "INSERT INTO texts (book_id, source, text) VALUES (?, ?, ?)",
-            (book_id, str(source), text),
+            (book_id, source, text),
         )
         connection.execute(
             "INSERT INTO texts_raw (book_id, source, text) VALUES (?, ?, ?) "
             "ON CONFLICT(book_id) DO UPDATE SET source = excluded.source, "
             "text = excluded.text",
-            (book_id, str(source), text),
+            (book_id, source, text),
         )
         connection.commit()
-    return {"book_id": book_id, "chars": len(text), "source": str(source)}
+    return {"book_id": book_id, "chars": len(text), "source": source}
+
+
+def index_book(settings: Settings, book_id: int) -> dict[str, Any]:
+    """Extract one book's text and (re)index it; idempotent per source file."""
+    source = pick_source(settings, book_id)
+    text_path = extract_text(settings, source)
+    text = text_path.read_text(encoding="utf-8", errors="replace")
+    return index_text(settings, book_id, text, str(source))
 
 
 def indexed_book_ids() -> set[int]:

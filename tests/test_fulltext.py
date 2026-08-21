@@ -94,7 +94,9 @@ def test_read_book_pagination(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     text_path = tmp_path / "book.txt"
     text_path.write_text("0123456789" * 100, encoding="utf-8")
-    monkeypatch.setattr(fulltext, "pick_source", lambda s, b: tmp_path / "x.epub")
+    fake_source = tmp_path / "x.epub"
+    fake_source.touch()
+    monkeypatch.setattr(fulltext, "pick_source", lambda s, b: fake_source)
     monkeypatch.setattr(fulltext, "extract_text", lambda s, p: text_path)
 
     page1 = fulltext.read_book(settings, 1, offset=0, limit=100)
