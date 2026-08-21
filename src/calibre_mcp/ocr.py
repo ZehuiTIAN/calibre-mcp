@@ -57,7 +57,7 @@ class AnthropicProvider:
 
     def __init__(self, api_key: str, model: str, base_url: str | None = None) -> None:
         self._api_key = api_key
-        self._model = model
+        self._model = model or "claude-haiku-4-5-20251001"
         self._base_url = base_url
 
     def ocr_pages(self, page_images: list[bytes], context: dict[str, Any]) -> str:
@@ -91,7 +91,66 @@ class AnthropicProvider:
         return "\n\n".join(parts)
 
 
-PROVIDERS: dict[str, type[OcrProvider]] = {"anthropic": AnthropicProvider}
+class DashscopeProvider:
+    """Alibaba Cloud Bailian (百炼) qwen-vl-ocr via the OpenAI-compatible API.
+
+    Requires no extra SDK: plain HTTPS against dashscope.aliyuncs.com.
+    The default model (qwen-vl-ocr) is purpose-built for document OCR with
+    layout/structure output, and is priced per token (~0.3 元 per 200-page
+    book — see docs/OCR_PROVIDERS.md).
+    """
+
+    name = "dashscope"
+
+    def __init__(self, api_key: str, model: str, base_url: str | None = None) -> None:
+        self._api_key = api_key
+        self._model = model or "qwen-vl-ocr"
+        self._base_url = base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def ocr_pages(self, page_images: list[bytes], context: dict[str, Any]) -> str:
+        import json
+        import urllib.request
+
+        parts: list[str] = []
+        batch_size = 8  # keep a request comfortably inside context limits
+        for index in range(0, len(page_images), batch_size):
+            batch = page_images[index : index + batch_size]
+            content: list[dict[str, Any]] = [{"type": "text", "text": OCR_PROMPT}]
+            for image in batch:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64," + base64.b64encode(image).decode()
+                        },
+                    }
+                )
+            payload = json.dumps(
+                {
+                    "model": self._model,
+                    "max_tokens": 8192,
+                    "messages": [{"role": "user", "content": content}],
+                }
+            ).encode("utf-8")
+            request = urllib.request.Request(
+                f"{self._base_url}/chat/completions",
+                data=payload,
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=600) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            parts.append(body["choices"][0]["message"]["content"])
+        return "\n\n".join(parts)
+
+
+PROVIDERS: dict[str, type[OcrProvider]] = {
+    "anthropic": AnthropicProvider,
+    "dashscope": DashscopeProvider,
+}
 
 
 @dataclass

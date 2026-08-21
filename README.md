@@ -176,6 +176,17 @@ The provider interface is two methods (`ocr_pages`); adding Azure Document
 Intelligence or Aliyun/Baidu OCR means implementing that interface and
 registering it in `ocr.PROVIDERS`.
 
+**Provider choice**: for Chinese books, [Alibaba Cloud Bailian
+`qwen-vl-ocr`](https://help.aliyun.com/zh/model-studio/qwen-vl-ocr) is the
+default recommendation — purpose-built document OCR with layout output,
+priced at roughly ¥0.3 for a 200-page book (≈1/20 the cost of a general
+vision LLM). Full comparison, official links and sign-up steps:
+**[docs/OCR_PROVIDERS.md](docs/OCR_PROVIDERS.md)**(中文).
+
+**API key isolation**: keys are per-user — set them in *your* MCP client
+config only, never in the repository. Nothing in this project reads keys
+from files or embeds them; each user brings their own key.
+
 ## Caveats
 
 - **Database lock**: while the Calibre GUI has the library open, write

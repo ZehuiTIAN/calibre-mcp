@@ -85,6 +85,49 @@ def test_get_provider_missing_key_raises():
         ocr_cli.get_provider(config)
 
 
+def test_get_provider_dashscope_defaults_model():
+    provider = ocr_cli.get_provider(ocr_cli.OcrConfig(provider="dashscope", api_key="k"))
+    assert provider.name == "dashscope"
+    assert provider._model == "qwen-vl-ocr"
+
+
+def test_dashscope_provider_requests_and_batches(monkeypatch):
+    sent: list[dict] = []
+
+    class FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def read(self):
+            return self._payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def fake_urlopen(request, timeout):
+        import json
+
+        body = json.loads(request.data.decode("utf-8"))
+        sent.append(body)
+        assert request.get_header("Authorization") == "Bearer test-key"
+        assert body["model"] == "qwen-vl-ocr"
+        return FakeResponse(
+            json.dumps({"choices": [{"message": {"content": "# One\n\ntext"}}]}).encode()
+        )
+
+    monkeypatch.setattr(ocr_cli.urllib.request, "urlopen", fake_urlopen)
+    provider = ocr_cli.DashscopeProvider("test-key", "", base_url=None)
+    pages = [b"page" + str(i).encode() for i in range(10)]  # 10 pages -> 2 batches
+    markdown = provider.ocr_pages(pages, {})
+    assert len(sent) == 2
+    assert len(sent[0]["messages"][0]["content"]) == 1 + 8  # prompt + 8 images
+    assert len(sent[1]["messages"][0]["content"]) == 1 + 2
+    assert markdown == "# One\n\ntext\n\n# One\n\ntext"
+
+
 def test_is_scanned_threshold(monkeypatch):
     blank_pages = [FakePdfPage("") for _ in range(8)]
     text_pages = [FakePdfPage("real text " * 20) for _ in range(2)]
