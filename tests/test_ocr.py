@@ -270,6 +270,49 @@ def test_ocr_resume_new_provider_rekeys_cache(tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+def test_ocr_retries_transient_failures(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(fulltext, "cache_dir", lambda: cache)
+    monkeypatch.setattr(ocr_cli.time, "sleep", lambda s: None)
+
+    source = tmp_path / "book.pdf"
+    source.touch()
+    images = [b"img"]
+    attempts: list[int] = []
+
+    def flaky_ocr(page_images, context):
+        attempts.append(1)
+        if len(attempts) < 3:  # fail twice, then succeed
+            raise TimeoutError("read operation timed out")
+        return "finally worked"
+
+    provider = SimpleNamespace(name="p1", _model="m1", ocr_pages=flaky_ocr)
+    markdown, info = ocr_cli._ocr_with_resume(settings, provider, source, images, {})
+    assert markdown == "finally worked"
+    assert info["fresh_batches"] == 1
+    assert len(attempts) == 3
+
+
+def test_ocr_gives_up_after_retries(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(fulltext, "cache_dir", lambda: cache)
+    monkeypatch.setattr(ocr_cli.time, "sleep", lambda s: None)
+
+    source = tmp_path / "book.pdf"
+    source.touch()
+
+    def always_fails(page_images, context):
+        raise TimeoutError("nope")
+
+    provider = SimpleNamespace(name="p1", _model="m1", ocr_pages=always_fails)
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        ocr_cli._ocr_with_resume(settings, provider, source, [b"img"], {})
+
+
 # ---------------------------------------------------------- integration tests
 
 

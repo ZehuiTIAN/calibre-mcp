@@ -21,6 +21,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -278,6 +279,27 @@ def _batch_dir(settings: Settings, source: Path, provider_name: str, model: str)
     return directory
 
 
+OCR_RETRIES = 3
+
+
+def _call_with_retry(
+    provider: OcrProvider,
+    images: list[bytes],
+    context: dict[str, Any],
+    retries: int = OCR_RETRIES,
+) -> str:
+    """Call the provider with exponential backoff; cloud hiccups are common."""
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return provider.ocr_pages(images, context)
+        except Exception as exc:  # noqa: BLE001 — any provider error is retryable
+            last_error = exc
+            if attempt < retries:
+                time.sleep(5 * attempt)
+    raise RuntimeError(f"OCR provider failed after {retries} attempts: {last_error}")
+
+
 def _ocr_with_resume(
     settings: Settings,
     provider: OcrProvider,
@@ -300,8 +322,10 @@ def _ocr_with_resume(
         if batch_file.exists():
             parts.append(batch_file.read_text(encoding="utf-8", errors="replace"))
         else:
-            text = provider.ocr_pages(
-                images[index : index + OCR_BATCH_SIZE], {**context, "batch_start": index}
+            text = _call_with_retry(
+                provider,
+                images[index : index + OCR_BATCH_SIZE],
+                {**context, "batch_start": index},
             )
             batch_file.write_text(text, encoding="utf-8")
             parts.append(text)
