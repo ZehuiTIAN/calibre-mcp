@@ -45,8 +45,10 @@ class OcrProvider(Protocol):
 OCR_PROMPT = (
     "Transcribe these book pages into clean Markdown. Preserve chapter "
     "headings (as # / ## headings), paragraphs, and reading order. Skip "
-    "running headers, page numbers and footnotes. Do not add any commentary "
-    "before or after the transcription."
+    "running headers, page numbers and footnotes. Output plain Markdown "
+    "text only: never wrap prose in LaTeX or math delimiters, use math "
+    "syntax only for genuine formulas. Do not add any commentary before "
+    "or after the transcription."
 )
 
 
