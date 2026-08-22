@@ -252,14 +252,65 @@ def render_pages(pdf_path: Path, dpi: int = 150, max_pages: int = 500) -> list[b
 # ------------------------------------------------------------------ pipeline
 
 
-def ocr_cache_path(settings: Settings, source: Path) -> Path:
-    """Location of the cached OCR markdown for a source file."""
-    digest = hashlib.sha1(
+OCR_BATCH_SIZE = 8
+
+
+def _source_digest(source: Path) -> str:
+    return hashlib.sha1(
         f"{source}:{source.stat().st_mtime_ns}".encode()
     ).hexdigest()[:16]
-    target = fulltext.cache_dir() / "ocr" / f"{digest}.md"
+
+
+def ocr_cache_path(settings: Settings, source: Path) -> Path:
+    """Location of the cached OCR markdown for a source file."""
+    target = fulltext.cache_dir() / "ocr" / f"{_source_digest(source)}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     return target
+
+
+def _batch_dir(settings: Settings, source: Path, provider_name: str, model: str) -> Path:
+    """Per-batch resume cache; keyed by source + provider + model."""
+    key = hashlib.sha1(
+        f"{source}:{source.stat().st_mtime_ns}:{provider_name}:{model}".encode()
+    ).hexdigest()[:16]
+    directory = fulltext.cache_dir() / "ocr-batches" / key
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _ocr_with_resume(
+    settings: Settings,
+    provider: OcrProvider,
+    source: Path,
+    images: list[bytes],
+    context: dict[str, Any],
+) -> tuple[str, dict[str, int]]:
+    """OCR page batches with per-batch caching, so interrupted runs resume.
+
+    Each batch of OCR_BATCH_SIZE pages is persisted as soon as it comes back
+    from the provider; on a later run only missing batches are re-requested
+    (and switching provider or model re-keys the cache automatically).
+    """
+    model = getattr(provider, "_model", "")
+    batch_dir = _batch_dir(settings, source, provider.name, model)
+    parts: list[str] = []
+    fresh = 0
+    for index in range(0, len(images), OCR_BATCH_SIZE):
+        batch_file = batch_dir / f"{index:04d}.md"
+        if batch_file.exists():
+            parts.append(batch_file.read_text(encoding="utf-8", errors="replace"))
+        else:
+            text = provider.ocr_pages(
+                images[index : index + OCR_BATCH_SIZE], {**context, "batch_start": index}
+            )
+            batch_file.write_text(text, encoding="utf-8")
+            parts.append(text)
+            fresh += 1
+    return "\n\n".join(parts), {
+        "batches": len(parts),
+        "fresh_batches": fresh,
+        "cached_batches": len(parts) - fresh,
+    }
 
 
 def typeset_epub(markdown: str, title: str, author: str, out_dir: Path) -> Path:
@@ -332,7 +383,10 @@ def ocr_book(
     config = OcrConfig.from_env()
     provider = get_provider(config)
     images = render_pages(pdf_path, max_pages=config.max_pages)
-    markdown = provider.ocr_pages(
+    markdown, batch_info = _ocr_with_resume(
+        settings,
+        provider,
+        pdf_path,
         images,
         {"book_id": book_id, "title": meta.get("title", ""), "pages": len(images)},
     )
@@ -349,6 +403,7 @@ def ocr_book(
         "ocr_chars": len(markdown),
         "indexed": True,
         "cache_path": str(cache),
+        **batch_info,
     }
 
     if typeset:

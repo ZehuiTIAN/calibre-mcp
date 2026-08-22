@@ -214,6 +214,62 @@ def test_ocr_book_rejects_non_pdf(tmp_path, monkeypatch):
         ocr_cli.ocr_book(settings, 1)
 
 
+def test_ocr_resume_reuses_cached_batches(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(fulltext, "cache_dir", lambda: cache)
+
+    source = tmp_path / "book.pdf"
+    source.touch()
+    images = [f"img{i}".encode() for i in range(20)]  # 20 pages -> 3 batches
+    calls: list[int] = []
+
+    class CountingProvider:
+        name = "counting"
+        _model = "m1"
+
+        def ocr_pages(self, page_images, context):
+            calls.append(context.get("batch_start", -1))
+            return f"batch@{context.get('batch_start', -1)}"
+
+    provider = CountingProvider()
+    markdown, info = ocr_cli._ocr_with_resume(settings, provider, source, images, {})
+    assert info == {"batches": 3, "fresh_batches": 3, "cached_batches": 0}
+    assert sorted(calls) == [0, 8, 16]
+
+    # Second run: everything comes from cache, provider is never called.
+    calls.clear()
+    markdown2, info2 = ocr_cli._ocr_with_resume(settings, provider, source, images, {})
+    assert markdown2 == markdown
+    assert info2 == {"batches": 3, "fresh_batches": 0, "cached_batches": 3}
+    assert calls == []
+
+
+def test_ocr_resume_new_provider_rekeys_cache(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(fulltext, "cache_dir", lambda: cache)
+
+    source = tmp_path / "book.pdf"
+    source.touch()
+    images = [b"img"]
+
+    calls: list[str] = []
+
+    def counting_ocr(page_images, context):
+        calls.append("called")
+        return "text"
+
+    provider = SimpleNamespace(name="p1", _model="m1", ocr_pages=counting_ocr)
+    ocr_cli._ocr_with_resume(settings, provider, source, images, {})
+    # Different model -> different cache key -> OCR runs again.
+    provider2 = SimpleNamespace(name="p1", _model="m2", ocr_pages=counting_ocr)
+    ocr_cli._ocr_with_resume(settings, provider2, source, images, {})
+    assert len(calls) == 2
+
+
 # ---------------------------------------------------------- integration tests
 
 
